@@ -6,7 +6,7 @@ cwd=$(pwd)
 
 docker run -it \
     --name hunavsim_pmb2 \
-    --gpus 0 \
+    --gpus all \
     --runtime=nvidia \
     --env="NVIDIA_VISIBLE_DEVICES=none" \
     --env="NVIDIA_DRIVER_CAPABILITIES=all" \
