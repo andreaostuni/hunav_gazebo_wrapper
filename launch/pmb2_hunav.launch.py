@@ -170,6 +170,7 @@ def declare_actions(
 
     
     pmb2_2dnav = get_package_share_directory("pmb2_2dnav")
+    wrapper = get_package_share_directory("hunav_gazebo_wrapper")
 
     nav_launch = PathJoinSubstitution([
         FindPackageShare("nav2_bringup"),
@@ -180,7 +181,7 @@ def declare_actions(
         PythonLaunchDescriptionSource([nav_launch]),
         launch_arguments={
             "params_file": os.path.join(
-                pmb2_2dnav, "params", "pmb2_nav_public_sim.yaml"
+                wrapper, "launch", "pmb2_params", "pmb2_nav_public_sim.yaml"
             ),
             "use_sim_time": "True",
         }.items(),
@@ -196,7 +197,7 @@ def declare_actions(
         PythonLaunchDescriptionSource([slam_launch]),
         launch_arguments={
             "params_file": os.path.join(
-                pmb2_2dnav, "params", "pmb2_nav_public_sim.yaml"
+                wrapper, "launch", "pmb2_params", "pmb2_nav_public_sim.yaml"
             ),
             "use_sim_time": "True",
         }.items(),
@@ -212,7 +213,7 @@ def declare_actions(
         PythonLaunchDescriptionSource([loc_launch]),
         launch_arguments={
             "params_file": os.path.join(
-                pmb2_2dnav, "params", "pmb2_nav_public_sim.yaml"
+                wrapper, "launch", "pmb2_params", "pmb2_nav_public_sim.yaml"
             ),
             "map": LaunchConfiguration("world_name"),
             "use_sim_time": "True",
