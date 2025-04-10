@@ -50,6 +50,8 @@ public:
   bool GetRobot();
   /// \brief Helper function to collect obtacles from Gazebo
   void HandleObstacles();
+  /// \brief Helper function to collect obtacles from Gazebo
+  void HandleObstacles2();
   /// \brief Helper function to update the Gazebo actors
   void UpdateGazeboPedestrians(const gazebo::common::UpdateInfo& _info, const hunav_msgs::msg::Agents& _agents);
   /// @brief  Helper function to get the closest point on a bounding box
@@ -227,7 +229,7 @@ void HuNavPlugin::Load(gazebo::physics::WorldPtr _world, sdf::ElementPtr _sdf)
 
   // Reset();
   hnav_->InitializeAgents();
-  hnav_->HandleObstacles();
+  hnav_->HandleObstacles2();
 
   hnav_->lastUpdate = _world->SimTime();
 
@@ -569,6 +571,115 @@ void HuNavPluginPrivate::goalCallback(const geometry_msgs::msg::PoseStamped::Sha
 //     }
 //   }
 // }
+
+
+
+ignition::math::Vector3d ClosestPointUsingCollisions(
+  const ignition::math::Vector3d &point,
+  const gazebo::physics::WorldPtr &world,
+  const std::vector<std::string> &ignoreModels)
+{
+  double minDist = std::numeric_limits<double>::max();
+  ignition::math::Vector3d closestPoint;
+
+  // Iterate through all models in the world
+  for (size_t i = 0; i < world->ModelCount(); ++i)
+  {
+      gazebo::physics::ModelPtr model = world->ModelByIndex(i);
+
+      // Skip ignored models
+      if (std::find(ignoreModels.begin(), ignoreModels.end(), model->GetName()) != ignoreModels.end())
+          continue;
+
+      // Iterate through all links in the model
+      for (auto link : model->GetLinks())
+      {
+          // Iterate through all collisions in the link
+          for (auto collision : link->GetCollisions())
+          {
+              // Get the bounding box of the collision
+              auto bbox = collision->BoundingBox();
+
+              // Compute the closest point on the bounding box
+              auto minCorner = bbox.Min();
+              auto maxCorner = bbox.Max();
+              double x = std::max(minCorner.X(), std::min(point.X(), maxCorner.X()));
+              double y = std::max(minCorner.Y(), std::min(point.Y(), maxCorner.Y()));
+              double z = std::max(minCorner.Z(), std::min(point.Z(), maxCorner.Z()));
+              ignition::math::Vector3d candidatePoint(x, y, z);
+
+              // Compute the distance to the point
+              double dist = (candidatePoint - point).Length();
+              if (dist < minDist)
+              {
+                  minDist = dist;
+                  closestPoint = candidatePoint;
+              }
+          }
+      }
+  }
+
+  return closestPoint;
+}
+
+
+
+void HuNavPluginPrivate::HandleObstacles2()
+{
+  for (size_t i = 0; i < pedestrians.size(); ++i)
+  {
+    gazebo::physics::ModelPtr agent = world->ModelByName(pedestrians[i].name);
+
+    double minDist = 5.0; //10000.0;
+    pedestrians[i].closest_obs.clear();
+
+    for (size_t j = 0; j < world->ModelCount(); ++j)
+    {
+      gazebo::physics::ModelPtr modelObstacle = world->ModelByIndex(j);
+
+      // Avoid to compute the other actors as obstacles
+      for (size_t k = 0; k < pedestrians.size(); ++k)
+      {
+        if ((int)modelObstacle->GetId() == pedestrians[k].id)
+          break;
+      }
+
+      // Avoid the agent itself and the indicated models
+      if (agent->GetId() != modelObstacle->GetId() && std::find(this->ignoreModels.begin(), this->ignoreModels.end(),
+                                                                modelObstacle->GetName()) == this->ignoreModels.end())
+      {
+
+        // Iterate through all links in the model
+        for (auto link : modelObstacle->GetLinks())
+        {
+          // Iterate through all collisions in the link
+          for (auto collision : link->GetCollisions())
+          {
+            // Get the bounding box of the collision
+            auto bbox = collision->BoundingBox();
+
+            ignition::math::Vector3d actorPos = agent->WorldPose().Pos();
+            auto closestObs = GetClosestPointOnBoundingBox(actorPos, modelObstacle->BoundingBox()); 
+            ignition::math::Vector3d offset = closestObs - actorPos;
+            double dist = offset.Length();
+            if (dist > 0 && dist < minDist)
+            {
+              geometry_msgs::msg::Point p;
+              p.x = closestObs.X();
+              p.y = closestObs.Y();
+              p.z = 0.0;
+              pedestrians[i].closest_obs.push_back(p);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+
+
+
 
 
 
@@ -1025,7 +1136,7 @@ void HuNavPluginPrivate::OnUpdate(const gazebo::common::UpdateInfo& _info)
   // }
 
   // update closest obstacle (fill pedestrians obstacles)
-  HandleObstacles();
+  HandleObstacles2();
   // get robot state (fill robotAgent)
   if (!GetRobot())
     return;
