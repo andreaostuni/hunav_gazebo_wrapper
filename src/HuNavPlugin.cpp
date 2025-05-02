@@ -296,8 +296,10 @@ void HuNavPlugin::Reset()
   RCLCPP_INFO(hnav_->rosnode->get_logger(), "\n\n---------World reset---------\n");
 
   hnav_->reset = true;
-  hnav_->lastUpdate = 0;  // hnav_->world->SimTime();
+  hnav_->lastUpdate = 0.0;  // hnav_->world->SimTime();
   hnav_->rostime = hnav_->rosnode->get_clock()->now();
+
+  hnav_->InitializeRobot();
 
   for (size_t i = 0; i < hnav_->init_pedestrians.agents.size(); ++i)
   {
@@ -406,16 +408,15 @@ void HuNavPluginPrivate::InitializeAgents()
   if (result.wait_for(ms) == std::future_status::ready)
   {
     // Initialize the actors
-    // const hunav_msgs::msg::Agents &agents = result.get()->agents;
     auto res = *result.get();
-    const hunav_msgs::msg::Agents agents = res.agents;
+    init_pedestrians = res.agents;
 
     // if (result.success) {
     // init_pedestrians = result.get()->agents;
-    RCLCPP_INFO(rosnode->get_logger(), "Received %i agents from service /get_agents", (int)agents.agents.size());
+    RCLCPP_INFO(rosnode->get_logger(), "Received %i agents from service /get_agents", (int)init_pedestrians.agents.size());
     pedestrians.clear();
 
-    for (auto agent : agents.agents)
+    for (auto agent : init_pedestrians.agents)
     {
       hunav_msgs::msg::Agent ag = agent;
 
