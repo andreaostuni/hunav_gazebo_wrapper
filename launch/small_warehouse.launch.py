@@ -280,7 +280,7 @@ def generate_launch_description():
     )
 
     declare_agents_conf_file = DeclareLaunchArgument(
-        'configuration_file', default_value='agents_house.yaml',
+        'configuration_file', default_value='agents_warehouse.yaml',
         description='Specify configuration file name in the cofig directory'
     )
     declare_metrics_conf_file = DeclareLaunchArgument(
