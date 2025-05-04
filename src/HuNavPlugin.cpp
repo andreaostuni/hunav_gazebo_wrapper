@@ -128,6 +128,7 @@ public:
 
   bool waitForGoal;
   bool goalReceived;
+  bool useCollision;
   std::string goalTopic;
 
   /// \brief List of models to ignore. Used for vector field
@@ -171,6 +172,13 @@ void HuNavPlugin::Load(gazebo::physics::WorldPtr _world, sdf::ElementPtr _sdf)
   {
     hnav_->waitForGoal = false;
     RCLCPP_INFO(hnav_->rosnode->get_logger(), "PARAMETER USE_NAVGOAL_TO_START IS NOT IN THE WORLD FILE!!");
+  }
+  if (_sdf->HasElement("use_collision"))
+    hnav_->useCollision = _sdf->Get<bool>("use_collision");
+  else
+  {
+    hnav_->useCollision = false;
+    RCLCPP_INFO(hnav_->rosnode->get_logger(), "PARAMETER USE_COLLISION IS NOT IN THE WORLD FILE!!");
   }
 
   if (hnav_->waitForGoal)
@@ -438,6 +446,12 @@ void HuNavPluginPrivate::InitializeAgents()
       actorPose.Pos().Y(agent.position.position.y);
       actorPose.Rot() = ignition::math::Quaterniond(1.5707, 0, yaw);
       model->SetWorldPose(actorPose);
+      if (useCollision)
+      {
+        gazebo::physics::ModelPtr body_model = world->ModelByName(agent.name + "_body");
+        actorPose.Rot() = ignition::math::Quaterniond(0, 0, yaw);
+        body_model->SetWorldPose(actorPose);
+      }
       //-----------------------------------
 
       ignition::math::Vector3d pos = model->WorldPose().Pos();
@@ -986,6 +1000,12 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
     bool is_paused = world->IsPaused();
     world->SetPaused(true);
     model->SetWorldPose(actorPose);  //, true, true); // false, false);
+    if (useCollision)
+    {
+      gazebo::physics::ModelPtr body_model = world->ModelByName(a.name + "_body");
+      actorPose.Rot() = ignition::math::Quaterniond(0,0, yaw);
+      body_model->SetWorldPose(actorPose);  //, true, true); // false, false);
+    }
     world->SetPaused(is_paused);
 
     // actor->SetLinearVel(entity_lin_vel);
