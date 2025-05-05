@@ -89,6 +89,7 @@ private:
   std::string base_world_;
   bool plug_use_gazebo_obs_;
   bool plug_use_navgoal_to_start_;
+  bool plug_use_collision_;
   std::string plug_navgoal_topic_;
   double plug_update_rate_;
   std::string plug_robot_name_;

@@ -128,6 +128,7 @@ public:
 
   bool waitForGoal;
   bool goalReceived;
+  bool useCollision;
   std::string goalTopic;
 
   /// \brief List of models to ignore. Used for vector field
@@ -171,6 +172,13 @@ void HuNavPlugin::Load(gazebo::physics::WorldPtr _world, sdf::ElementPtr _sdf)
   {
     hnav_->waitForGoal = false;
     RCLCPP_INFO(hnav_->rosnode->get_logger(), "PARAMETER USE_NAVGOAL_TO_START IS NOT IN THE WORLD FILE!!");
+  }
+  if (_sdf->HasElement("use_collision"))
+    hnav_->useCollision = _sdf->Get<bool>("use_collision");
+  else
+  {
+    hnav_->useCollision = false;
+    RCLCPP_INFO(hnav_->rosnode->get_logger(), "PARAMETER USE_COLLISION IS NOT IN THE WORLD FILE!!");
   }
 
   if (hnav_->waitForGoal)
@@ -296,8 +304,10 @@ void HuNavPlugin::Reset()
   RCLCPP_INFO(hnav_->rosnode->get_logger(), "\n\n---------World reset---------\n");
 
   hnav_->reset = true;
-  hnav_->lastUpdate = 0;  // hnav_->world->SimTime();
+  hnav_->lastUpdate = 0.0;  // hnav_->world->SimTime();
   hnav_->rostime = hnav_->rosnode->get_clock()->now();
+
+  hnav_->InitializeRobot();
 
   for (size_t i = 0; i < hnav_->init_pedestrians.agents.size(); ++i)
   {
@@ -406,16 +416,15 @@ void HuNavPluginPrivate::InitializeAgents()
   if (result.wait_for(ms) == std::future_status::ready)
   {
     // Initialize the actors
-    // const hunav_msgs::msg::Agents &agents = result.get()->agents;
     auto res = *result.get();
-    const hunav_msgs::msg::Agents agents = res.agents;
+    init_pedestrians = res.agents;
 
     // if (result.success) {
     // init_pedestrians = result.get()->agents;
-    RCLCPP_INFO(rosnode->get_logger(), "Received %i agents from service /get_agents", (int)agents.agents.size());
+    RCLCPP_INFO(rosnode->get_logger(), "Received %i agents from service /get_agents", (int)init_pedestrians.agents.size());
     pedestrians.clear();
 
-    for (auto agent : agents.agents)
+    for (auto agent : init_pedestrians.agents)
     {
       hunav_msgs::msg::Agent ag = agent;
 
@@ -437,6 +446,12 @@ void HuNavPluginPrivate::InitializeAgents()
       actorPose.Pos().Y(agent.position.position.y);
       actorPose.Rot() = ignition::math::Quaterniond(1.5707, 0, yaw);
       model->SetWorldPose(actorPose);
+      if (useCollision)
+      {
+        gazebo::physics::ModelPtr body_model = world->ModelByName(agent.name + "_body");
+        actorPose.Rot() = ignition::math::Quaterniond(0, 0, yaw);
+        body_model->SetWorldPose(actorPose);
+      }
       //-----------------------------------
 
       ignition::math::Vector3d pos = model->WorldPose().Pos();
@@ -985,6 +1000,12 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
     bool is_paused = world->IsPaused();
     world->SetPaused(true);
     model->SetWorldPose(actorPose);  //, true, true); // false, false);
+    if (useCollision)
+    {
+      gazebo::physics::ModelPtr body_model = world->ModelByName(a.name + "_body");
+      actorPose.Rot() = ignition::math::Quaterniond(0,0, yaw);
+      body_model->SetWorldPose(actorPose);  //, true, true); // false, false);
+    }
     world->SetPaused(is_paused);
 
     // actor->SetLinearVel(entity_lin_vel);

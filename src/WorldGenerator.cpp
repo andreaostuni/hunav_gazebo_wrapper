@@ -98,6 +98,7 @@ void WorldGenerator::readPluginParams()
   // Plugin parameters
   base_world_ = this->declare_parameter<std::string>("base_world", std::string("bookstore.world"));
   plug_use_gazebo_obs_ = this->declare_parameter<bool>("use_gazebo_obs", false);
+  plug_use_collision_ = this->declare_parameter<bool>("use_collision", false);
   plug_update_rate_ = this->declare_parameter<double>("update_rate", 100.0);
   plug_robot_name_ = this->declare_parameter<std::string>("robot_name", std::string("robot"));
   RCLCPP_INFO(this->get_logger(), "Robot name: %s", plug_robot_name_.c_str());
@@ -256,10 +257,10 @@ void WorldGenerator::readAgentParams()
   }
 }
 
-void WorldGenerator::getAgentsService(const std::shared_ptr<hunav_msgs::srv::GetAgents::Request> request,
+void WorldGenerator::getAgentsService(const std::shared_ptr<hunav_msgs::srv::GetAgents::Request> ,
                                       std::shared_ptr<hunav_msgs::srv::GetAgents::Response> response)
 {
-  int r = request->empty;
+  // int r = request->empty;
   response->agents = agents_;
   std::cout << "Sending " << agents_.agents.size() << " agents to agent_manager" << std::endl;
   std::cout << "Shutting down WorldGenerator..." << std::endl;
@@ -286,8 +287,7 @@ bool WorldGenerator::processXML()
   if (err != tinyxml2::XML_SUCCESS)
   {
     RCLCPP_ERROR(this->get_logger(), "\nCould not open world file: %s", base_world_.c_str());
-    RCLCPP_ERROR(this->get_logger(), "Please, check that the world file does not contain any comment!\n",
-                 base_world_.c_str());
+    RCLCPP_ERROR(this->get_logger(), "Please, check that the world file does not contain any comment!\n");
     return false;
   }
 
@@ -364,6 +364,9 @@ bool WorldGenerator::processXML()
   tinyxml2::XMLElement* pGazebo = doc.NewElement("use_gazebo_obs");
   pGazebo->SetText(plug_use_gazebo_obs_);
 
+  tinyxml2::XMLElement* pCollision = doc.NewElement("use_collision");
+  pCollision->SetText(plug_use_collision_);
+
   tinyxml2::XMLElement* pGlobalFrame = doc.NewElement("global_frame_to_publish");
   pGlobalFrame->SetText(plug_global_frame_.c_str());
 
@@ -388,6 +391,7 @@ bool WorldGenerator::processXML()
   plugin->InsertFirstChild(pUpdate);
   plugin->InsertAfterChild(pUpdate, pRobot);
   plugin->InsertAfterChild(pRobot, pGazebo);
+  plugin->InsertAfterChild(pGazebo, pCollision);
   plugin->InsertAfterChild(pGazebo, pGlobalFrame);
   plugin->InsertAfterChild(pGlobalFrame, pUseGoal);
   plugin->InsertAfterChild(pUseGoal, pGoalTopic);
@@ -555,6 +559,43 @@ bool WorldGenerator::processXML()
       animation_active->InsertFirstChild(pFilename2);
       animation_active->InsertAfterChild(pFilename2, pScale2);
       animation_active->InsertAfterChild(pScale2, pInterpolate1);
+    }
+    if (plug_use_collision_)
+    {
+      
+      tinyxml2::XMLElement* pNewModel = doc.NewElement("model");
+      pNewModel->SetAttribute("name", (a.name + "_body").c_str());
+    
+      tinyxml2::XMLElement* modelPose = doc.NewElement("pose");
+      modelPose->SetText(pose.c_str());
+      pNewModel->InsertEndChild(modelPose);
+    
+      tinyxml2::XMLElement* link = doc.NewElement("link");
+      link->SetAttribute("name", "base_link");
+    
+      tinyxml2::XMLElement* inertial = doc.NewElement("inertial");
+      tinyxml2::XMLElement* mass = doc.NewElement("mass");
+      mass->SetText("5.0");
+      inertial->InsertEndChild(mass);
+      link->InsertEndChild(inertial);
+    
+      tinyxml2::XMLElement* collision = doc.NewElement("collision");
+      collision->SetAttribute("name", "collision");
+      tinyxml2::XMLElement* geom = doc.NewElement("geometry");
+      tinyxml2::XMLElement* cylinder = doc.NewElement("cylinder");
+      tinyxml2::XMLElement* radius = doc.NewElement("radius");
+      tinyxml2::XMLElement* length = doc.NewElement("length");
+      radius->SetText(a.radius);  // agent radius
+      cylinder->InsertEndChild(radius);
+      cylinder->InsertEndChild(length);
+      length->SetText("1.60");  // agent height
+      geom->InsertEndChild(cylinder);
+      collision->InsertEndChild(geom);
+
+      link->InsertEndChild(collision);
+    
+      pNewModel->InsertEndChild(link);
+      doc.FirstChildElement("sdf")->FirstChildElement("world")->InsertEndChild(pNewModel);
     }
   }
 
