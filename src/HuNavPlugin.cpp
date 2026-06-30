@@ -94,17 +94,18 @@ public:
   /// \brief ros service to reset the agents in the hunav_manager
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_sub;
 
-  /// \brief the robot as a agent msg
-  hunav_msgs::msg::Agent robotAgent;
-  hunav_msgs::msg::Agent init_robotAgent;
+  /// \brief the robots as agent msgs (one entry per robot, parallel to
+  /// robotNames / robotModels)
+  std::vector<hunav_msgs::msg::Agent> robotAgents;
+  std::vector<hunav_msgs::msg::Agent> init_robotAgents;
 
   /// \brief vector of pedestrians detected.
   std::vector<hunav_msgs::msg::Agent> pedestrians;
   // init state of agents
   hunav_msgs::msg::Agents init_pedestrians;
 
-  /// \brief Pointer to the parent actor.
-  gazebo::physics::ModelPtr robotModel;
+  /// \brief Pointers to the robot models (parallel to robotNames).
+  std::vector<gazebo::physics::ModelPtr> robotModels;
 
   /// \brief Pointer to the world, for convenience.
   gazebo::physics::WorldPtr world;
@@ -123,7 +124,7 @@ public:
   double update_rate_secs;
   bool reset;
 
-  std::string robotName;
+  std::vector<std::string> robotNames;
   std::string globalFrame;
 
   bool waitForGoal;
@@ -156,10 +157,14 @@ void HuNavPlugin::Load(gazebo::physics::WorldPtr _world, sdf::ElementPtr _sdf)
   // const gazebo_ros::QoS &qos = hnav_->rosnode->get_qos();
   hnav_->sdf = _sdf;
 
+  // Support one or several <robot_name> elements (multi-robot).
   if (_sdf->HasElement("robot_name"))
-    hnav_->robotName = _sdf->Get<std::string>("robot_name");
+  {
+    for (auto e = _sdf->GetElement("robot_name"); e; e = e->GetNextElement("robot_name"))
+      hnav_->robotNames.push_back(e->Get<std::string>());
+  }
   else
-    hnav_->robotName = "robot";
+    hnav_->robotNames.push_back("robot");
 
   if (_sdf->HasElement("global_frame_to_publish"))
     hnav_->globalFrame = _sdf->Get<std::string>("global_frame_to_publish");
@@ -352,17 +357,28 @@ void HuNavPlugin::Reset()
 
 bool HuNavPluginPrivate::InitializeRobot()
 {
-  RCLCPP_INFO(rosnode->get_logger(), "Initializing robot...");
-  robotModel = world->ModelByName(robotName);
-  if (!robotModel)
+  RCLCPP_INFO(rosnode->get_logger(), "Initializing %lu robot(s)...", robotNames.size());
+
+  robotModels.assign(robotNames.size(), nullptr);
+  robotAgents.assign(robotNames.size(), hunav_msgs::msg::Agent());
+  init_robotAgents.assign(robotNames.size(), hunav_msgs::msg::Agent());
+
+  bool all_found = true;
+  for (size_t i = 0; i < robotNames.size(); ++i)
   {
-    RCLCPP_ERROR(rosnode->get_logger(), "Robot model %s not found (yet)!!!!", robotName.c_str());
-    return false;
-  }
-  else
-  {
+    const std::string& robotName = robotNames[i];
+    gazebo::physics::ModelPtr robotModel = world->ModelByName(robotName);
+    robotModels[i] = robotModel;
+    if (!robotModel)
+    {
+      RCLCPP_ERROR(rosnode->get_logger(), "Robot model %s not found (yet)!!!!", robotName.c_str());
+      all_found = false;
+      continue;
+    }
+
     RCLCPP_INFO(rosnode->get_logger(), "Robot %s detected, initializing params...", robotName.c_str());
     // Initialize robot agent
+    hunav_msgs::msg::Agent& robotAgent = robotAgents[i];
     ignition::math::Vector3d pos = robotModel->WorldPose().Pos();
     ignition::math::Vector3d rpy = robotModel->WorldPose().Rot().Euler();
     robotAgent.id = robotModel->GetId();
@@ -385,9 +401,9 @@ bool HuNavPluginPrivate::InitializeRobot()
     ignition::math::Vector3d angvel = robotModel->WorldAngularVel();
     robotAgent.velocity.angular.z = angvel.Z();
     robotAgent.angular_vel = angvel.Z();
-    init_robotAgent = robotAgent;
-    return true;
+    init_robotAgents[i] = robotAgent;
   }
+  return all_found;
 }
 
 void HuNavPluginPrivate::InitializeAgents()
@@ -773,31 +789,38 @@ void HuNavPluginPrivate::HandleObstacles()
  */
 bool HuNavPluginPrivate::GetRobot()
 {
-  if (!robotModel)
+  // (Re)initialize if the models are missing or have not been resolved yet.
+  bool need_init = robotModels.size() != robotNames.size();
+  for (const auto& m : robotModels)
+    if (!m)
+      need_init = true;
+  if (need_init)
   {
     if (!InitializeRobot())
-    {
-      RCLCPP_ERROR(rosnode->get_logger(), "Robot model %s not found!!!!", robotName.c_str());
       return false;
-    }
     return true;
   }
-  // Update robot agent
-  ignition::math::Vector3d pos = robotModel->WorldPose().Pos();
-  // ignition::math::Vector3d rpy = robotModel->WorldPose().Rot().Euler();
-  robotAgent.position.position.x = pos.X();
-  robotAgent.position.position.y = pos.Y();
-  tf2::Quaternion myQuaternion;
-  myQuaternion.setRPY(0, 0, robotModel->WorldPose().Rot().Yaw());
-  robotAgent.position.orientation = tf2::toMsg(myQuaternion);
-  robotAgent.yaw = robotModel->WorldPose().Rot().Yaw();
-  ignition::math::Vector3d linvel = robotModel->WorldLinearVel();
-  robotAgent.velocity.linear.x = linvel.X();
-  robotAgent.velocity.linear.y = linvel.Y();
-  robotAgent.linear_vel = linvel.Length();
-  ignition::math::Vector3d angvel = robotModel->WorldAngularVel();
-  robotAgent.velocity.angular.z = angvel.Z();
-  robotAgent.angular_vel = angvel.Z();
+
+  // Update every robot agent from its model
+  for (size_t i = 0; i < robotModels.size(); ++i)
+  {
+    const gazebo::physics::ModelPtr& robotModel = robotModels[i];
+    hunav_msgs::msg::Agent& robotAgent = robotAgents[i];
+    ignition::math::Vector3d pos = robotModel->WorldPose().Pos();
+    robotAgent.position.position.x = pos.X();
+    robotAgent.position.position.y = pos.Y();
+    tf2::Quaternion myQuaternion;
+    myQuaternion.setRPY(0, 0, robotModel->WorldPose().Rot().Yaw());
+    robotAgent.position.orientation = tf2::toMsg(myQuaternion);
+    robotAgent.yaw = robotModel->WorldPose().Rot().Yaw();
+    ignition::math::Vector3d linvel = robotModel->WorldLinearVel();
+    robotAgent.velocity.linear.x = linvel.X();
+    robotAgent.velocity.linear.y = linvel.Y();
+    robotAgent.linear_vel = linvel.Length();
+    ignition::math::Vector3d angvel = robotModel->WorldAngularVel();
+    robotAgent.velocity.angular.z = angvel.Z();
+    robotAgent.angular_vel = angvel.Z();
+  }
   return true;
 }
 
@@ -1184,7 +1207,7 @@ void HuNavPluginPrivate::OnUpdate(const gazebo::common::UpdateInfo& _info)
   agents.header.stamp = gazebo_ros::Convert<builtin_interfaces::msg::Time>(_info.simTime);
   // agents.header.stamp = now;
   agents.agents = pedestrians;
-  request->robot = robotAgent;
+  request->robots.agents = robotAgents;
   request->current_agents = agents;
 
   // Call the service

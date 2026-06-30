@@ -100,8 +100,13 @@ void WorldGenerator::readPluginParams()
   plug_use_gazebo_obs_ = this->declare_parameter<bool>("use_gazebo_obs", false);
   plug_use_collision_ = this->declare_parameter<bool>("use_collision", false);
   plug_update_rate_ = this->declare_parameter<double>("update_rate", 100.0);
-  plug_robot_name_ = this->declare_parameter<std::string>("robot_name", std::string("robot"));
-  RCLCPP_INFO(this->get_logger(), "Robot name: %s", plug_robot_name_.c_str());
+  // Multi-robot: prefer a "robot_names" string array, fall back to the single
+  // "robot_name" string for backward compatibility.
+  plug_robot_names_ = this->declare_parameter<std::vector<std::string>>("robot_names", std::vector<std::string>());
+  if (plug_robot_names_.empty())
+    plug_robot_names_.push_back(this->declare_parameter<std::string>("robot_name", std::string("robot")));
+  for (const auto& rn : plug_robot_names_)
+    RCLCPP_INFO(this->get_logger(), "Robot name: %s", rn.c_str());
   plug_global_frame_ = this->declare_parameter<std::string>("global_frame_to_publish", std::string("map"));
   plug_use_navgoal_to_start_ = this->declare_parameter<bool>("use_navgoal_to_start", false);
   plug_navgoal_topic_ = this->declare_parameter<std::string>("navgoal_topic", std::string("goal_pose"));
@@ -358,8 +363,13 @@ bool WorldGenerator::processXML()
   tinyxml2::XMLElement* pUpdate = doc.NewElement("update_rate");
   pUpdate->SetText(plug_update_rate_);
 
-  tinyxml2::XMLElement* pRobot = doc.NewElement("robot_name");
-  pRobot->SetText(plug_robot_name_.c_str());
+  // One <robot_name> element per robot.
+  std::vector<tinyxml2::XMLElement*> pRobots;
+  for (const std::string& rn : plug_robot_names_)
+  {
+    pRobots.push_back(doc.NewElement("robot_name"));
+    pRobots.back()->SetText(rn.c_str());
+  }
 
   tinyxml2::XMLElement* pGazebo = doc.NewElement("use_gazebo_obs");
   pGazebo->SetText(plug_use_gazebo_obs_);
@@ -389,8 +399,13 @@ bool WorldGenerator::processXML()
 
   tinyxml2::XMLElement* plugin = doc.FirstChildElement("sdf")->FirstChildElement("world")->FirstChildElement("plugin");
   plugin->InsertFirstChild(pUpdate);
-  plugin->InsertAfterChild(pUpdate, pRobot);
-  plugin->InsertAfterChild(pRobot, pGazebo);
+  tinyxml2::XMLNode* pAfter = pUpdate;
+  for (auto* pr : pRobots)
+  {
+    plugin->InsertAfterChild(pAfter, pr);
+    pAfter = pr;
+  }
+  plugin->InsertAfterChild(pAfter, pGazebo);
   plugin->InsertAfterChild(pGazebo, pCollision);
   plugin->InsertAfterChild(pGazebo, pGlobalFrame);
   plugin->InsertAfterChild(pGlobalFrame, pUseGoal);
