@@ -1260,6 +1260,9 @@ void HuNavPluginPrivate::OnUpdate(const gazebo::common::UpdateInfo& _info)
   // agents.header.stamp = now;
   agents.agents = pedestrians;
   request->robots.agents = robotAgents;
+  // Stamp the robots like the agents: hunav_evaluator pairs the human_states
+  // and robot_states messages by this stamp.
+  request->robots.header = agents.header;
   request->current_agents = agents;
 
   // Call the service
