@@ -251,6 +251,13 @@ void HuNavPlugin::Load(gazebo::physics::WorldPtr _world, sdf::ElementPtr _sdf)
   {
     gazebo::physics::ModelPtr model = hnav_->world->ModelByName(hnav_->pedestrians[i].name);
     gazebo::physics::ActorPtr actor = boost::dynamic_pointer_cast<gazebo::physics::Actor>(model);
+    if (!actor)
+    {
+      RCLCPP_ERROR(hnav_->rosnode->get_logger(),
+                   "Actor '%s' not found in the world (or not an actor); skipping its trajectory init.",
+                   hnav_->pedestrians[i].name.c_str());
+      continue;
+    }
 
     gazebo::physics::TrajectoryInfoPtr trajectoryInfo;
     trajectoryInfo.reset(new gazebo::physics::TrajectoryInfo());
@@ -318,22 +325,34 @@ void HuNavPlugin::Reset()
   {
     gazebo::physics::ModelPtr model = hnav_->world->ModelByName(hnav_->init_pedestrians.agents[i].name);
     gazebo::physics::ActorPtr actor = boost::dynamic_pointer_cast<gazebo::physics::Actor>(model);
+    if (!actor)
+    {
+      RCLCPP_ERROR(hnav_->rosnode->get_logger(),
+                   "Actor '%s' not found in the world (or not an actor); skipping reset.",
+                   hnav_->init_pedestrians.agents[i].name.c_str());
+      continue;
+    }
 
-    // // Gazebo models positions----------------
-    // ignition::math::Pose3d actorPose = actor->WorldPose();
-    // double yaw =
-    //     hnav_->normalizeAngle(hnav_->init_pedestrians.agents[i].yaw +
-    //     M_PI_2);
-    // auto entity_lin_vel = gazebo_ros::Convert<ignition::math::Vector3d>(
-    //     hnav_->init_pedestrians.agents[i].velocity.linear);
-    // auto entity_ang_vel = gazebo_ros::Convert<ignition::math::Vector3d>(
-    //     hnav_->init_pedestrians.agents[i].velocity.angular);
-    // actorPose.Pos().X(hnav_->init_pedestrians.agents[i].position.position.x);
-    // actorPose.Pos().Y(hnav_->init_pedestrians.agents[i].position.position.y);
-    // actorPose.Rot() = ignition::math::Quaterniond(1.5707, 0, yaw);
-    // model->SetWorldPose(actorPose);
-    // model->ResetPhysicsStates();
-    // //----------------------------------------
+    // Restore the actor explicitly instead of relying on Gazebo's world reset
+    // ordering. The manager reset below restores the matching logical state.
+    const auto& initial = hnav_->init_pedestrians.agents[i];
+    ignition::math::Pose3d actorPose = actor->WorldPose();
+    double yaw = hnav_->normalizeAngle(initial.yaw + M_PI_2);
+    actorPose.Pos().X(initial.position.position.x);
+    actorPose.Pos().Y(initial.position.position.y);
+    actorPose.Rot() = ignition::math::Quaterniond(1.5707, 0, yaw);
+    model->SetWorldPose(actorPose);
+    model->ResetPhysicsStates();
+    if (hnav_->useCollision)
+    {
+      gazebo::physics::ModelPtr body_model = hnav_->world->ModelByName(initial.name + "_body");
+      if (body_model)
+      {
+        actorPose.Rot() = ignition::math::Quaterniond(0, 0, yaw);
+        body_model->SetWorldPose(actorPose);
+        body_model->ResetPhysicsStates();
+      }
+    }
 
     //---Reset trajectories-----------------------------
     gazebo::physics::TrajectoryInfoPtr trajectoryInfo;
@@ -352,6 +371,28 @@ void HuNavPlugin::Reset()
     trajectoryInfo->duration = 1.0;
 
     actor->SetCustomTrajectory(trajectoryInfo);
+  }
+
+  // Restore the manager before the next compute_agents update can observe a
+  // mixture of old goals and reset Gazebo poses.
+  if (hnav_->rosSrvResetClient->service_is_ready())
+  {
+    auto request = std::make_shared<hunav_msgs::srv::ResetAgents::Request>();
+    request->current_agents = hnav_->init_pedestrians;
+    request->current_agents.header.frame_id = hnav_->globalFrame;
+    request->current_agents.header.stamp = hnav_->rosnode->get_clock()->now();
+    request->robots.agents = hnav_->init_robotAgents;
+    request->robots.header = request->current_agents.header;
+    auto result = hnav_->rosSrvResetClient->async_send_request(request);
+    if (result.wait_for(500ms) == std::future_status::ready && result.get()->ok)
+      RCLCPP_INFO(hnav_->rosnode->get_logger(), "HuNav agents restored to their initial episode state.");
+    else
+      RCLCPP_ERROR(hnav_->rosnode->get_logger(), "Failed to restore HuNav agent state via /reset_agents.");
+  }
+  else
+  {
+    RCLCPP_WARN(hnav_->rosnode->get_logger(),
+                "/reset_agents service not ready; motion-model strategy episode not advanced.");
   }
 }
 
@@ -453,6 +494,11 @@ void HuNavPluginPrivate::InitializeAgents()
 
       // ---- update Gazebo models ---
       gazebo::physics::ActorPtr actor = boost::dynamic_pointer_cast<gazebo::physics::Actor>(model);
+      if (!actor)
+      {
+        RCLCPP_ERROR(rosnode->get_logger(), "Model '%s' is not an actor; skipping.", agent.name.c_str());
+        return;
+      }
 
       ignition::math::Pose3d actorPose = actor->WorldPose();
       double yaw = normalizeAngle(agent.yaw + M_PI_2);
@@ -939,6 +985,12 @@ void HuNavPluginPrivate::UpdateGazeboPedestrians(const gazebo::common::UpdateInf
     // boost::dynamic_pointer_cast<gazebo::physics::Model>(entity);
     gazebo::physics::ModelPtr model = world->ModelByName(a.name);
     gazebo::physics::ActorPtr actor = boost::dynamic_pointer_cast<gazebo::physics::Actor>(model);
+    if (!actor)
+    {
+      RCLCPP_ERROR(rosnode->get_logger(), "Actor '%s' not found in the world (or not an actor); skipping update.",
+                   a.name.c_str());
+      continue;
+    }
 
     ignition::math::Pose3d actorPose = actor->WorldPose();
     double yaw = normalizeAngle(a.yaw + M_PI_2);

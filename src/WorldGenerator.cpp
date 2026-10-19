@@ -161,6 +161,35 @@ void WorldGenerator::readAgentParams()
     }
     auto aparams = parameters_client->get_parameters(agent_params);
 
+    // Guard against an incompletely-defined agent: if the loader is missing any
+    // of this agent's parameters, get_parameters() returns a short list (or
+    // PARAMETER_NOT_SET entries). The fixed-index reads below would then run off
+    // the end and crash, so skip the agent with a clear error instead.
+    bool agent_ok = aparams.size() >= params_.size();
+    if (agent_ok)
+    {
+      for (size_t i = 0; i < aparams.size(); i++)
+      {
+        if (aparams[i].get_type() == rclcpp::ParameterType::PARAMETER_NOT_SET)
+        {
+          RCLCPP_ERROR(this->get_logger(), "Agent '%s' parameter '%s' is not set; skipping this agent. "
+                                           "Check its definition in the agents YAML.",
+                       an.c_str(), agent_params[i].c_str());
+          agent_ok = false;
+          break;
+        }
+      }
+    }
+    else
+    {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Agent '%s' is missing parameters (got %zu of %zu); skipping it. "
+                   "Check that it is fully defined in the agents YAML.",
+                   an.c_str(), aparams.size(), params_.size());
+    }
+    if (!agent_ok)
+      continue;
+
     // {"agent1.id": {"type": "integer", "value": "1"},
     //"agent1.skin": {"type": "integer", "value": "0"},
     //"agent1.behavior.type": {"type": "integer", "value": "4"},
@@ -248,6 +277,17 @@ void WorldGenerator::readAgentParams()
         gnames[i] = an + "." + goal + goal_params_[i];
       }
       auto gparams = parameters_client->get_parameters({ gnames });
+      bool goal_ok = gparams.size() >= goal_params_.size();
+      for (size_t i = 0; goal_ok && i < gparams.size(); i++)
+        goal_ok = gparams[i].get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET;
+      if (!goal_ok)
+      {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Agent '%s' goal '%s' is missing coordinates; skipping this goal. "
+                     "Check '%s.%s.{x,y,h}' in the agents YAML.",
+                     an.c_str(), goal.c_str(), an.c_str(), goal.c_str());
+        continue;
+      }
       geometry_msgs::msg::Pose p;
       p.position.x = gparams[0].as_double();
       p.position.y = gparams[1].as_double();
